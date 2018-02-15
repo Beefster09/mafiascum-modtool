@@ -3,7 +3,7 @@
 
 Provides moderator tools and automation for mafiascum.net games.
 
-# Features
+## Features
 
 * Filters many different things a mod might be interested in:
   * `@mod` notes to the mod
@@ -12,11 +12,16 @@ Provides moderator tools and automation for mafiascum.net games.
 * Automatic vote counter
   * Username matching is more accurate than the robandkriskris.com counter (at least for Mini 1991)
   * Starts from the vote count starting on a given post instead of the start of the day. (With some limitations)
+  * Replacement tracking
 * Terminal colors
 * Quote blocks are automatically filtered out
 * ... More to come!
 
-# Installation
+## How to Use
+
+_Coming soon..._
+
+## Dependencies
 
 You will need 3.4+ installed, plus the following packages from pip:
 
