@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-from __future__ import print_function, unicode_literals, division
 
 import argparse
 import re
 from collections import defaultdict
-try:
-    import urlparse
-except ImportError:
-    from urllib import parse as urlparse
+from urllib import parse as urlparse
 
 import requests
 import lxml.html
@@ -36,7 +32,7 @@ SEPS = re.compile(r'[-_.]+|\s+')
 def abbrev_match(abbr, full):
     if len(abbr) < 2 or len(abbr) > len(full) or abbr[0].lower() != full[0].lower():
         return 0
-    if abbr.upper() == ''.join(filter(unicode.isupper, full)):
+    if abbr.upper() == ''.join(filter(str.isupper, full)):
         return 1
     if abbr.lower() == ''.join(w[0].lower() for w in SEPS.split(full) if w):
         return 1
@@ -106,7 +102,7 @@ def print_vote_count(votes, day='X', count='Y', deadline='20YY-MM-DD hh:mm:ss tz
     for wagon, voters in sorted(wagons.items(), key=lambda x: -len(x[1])):
         if wagon is not None:
             print('[b]{wagon}[/b] ({count}): {voters} {lminus}'.format(
-                wagon=wagon, count=len(voters), voters=', '.join(sorted(voters, key=unicode.lower)),
+                wagon=wagon, count=len(voters), voters=', '.join(sorted(voters, key=str.lower)),
                 lminus=lminus(len(voters), majority)
             ))
     print()
@@ -152,7 +148,7 @@ def filter_page(page, votes=None, initial_vote_count=False, day='X', count_no='Y
                 day = int(day)
                 count_no = int(count_no) + 1
                 header.drop_tree()
-                for rawline in etree.tostring(vote_counter).split('<br />'):
+                for rawline in etree.tostring(vote_counter, encoding='unicode').split('<br />'):
                     try:
                         line = lxml.html.fromstring(rawline).text_content().strip()
                     except etree.ParserError:
@@ -173,7 +169,7 @@ def filter_page(page, votes=None, initial_vote_count=False, day='X', count_no='Y
 
         postnum = int(post.xpath('.//p[@class="author"]/a/strong')[0].text_content().strip().lstrip('#'))
         user = post.xpath('.//dl[@class="postprofile"]/dt/a')[0].text_content().strip()
-        post_text = etree.tostring(post.find_class('content')[0]).strip()
+        post_text = etree.tostring(post.find_class('content')[0], encoding='unicode').strip()
         important = []
         deferred = []
         for rawline in post_text.split('<br />'):
