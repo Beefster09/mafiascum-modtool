@@ -18,10 +18,9 @@ Provides moderator tools and automation for mafiascum.net games.
 
 # Installation
 
-You will need Python 2.7 or 3.4+ installed, plus the following packages from pip:
+You will need 3.4+ installed, plus the following packages from pip:
 
 * fuzzywuzzy
 * lxml
 * requests
-
-Python 2.7 support may be dropped in the near future.
+* (OPTIONAL) python-Levenshtein
