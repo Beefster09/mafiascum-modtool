@@ -1,41 +1,37 @@
-
-RED     = '\x1b[31m'
-YELLOW  = '\x1b[33m'
-GREEN   = '\x1b[32m'
-CYAN    = '\x1b[36m'
-BLUE    = '\x1b[34m'
-MAGENTA = '\x1b[35m'
-
-B_RED     = '\x1b[91m'
-B_YELLOW  = '\x1b[93m'
-B_GREEN   = '\x1b[92m'
-B_CYAN    = '\x1b[96m'
-B_BLUE    = '\x1b[94m'
-B_MAGENTA = '\x1b[95m'
-
-BLACK = '\x1b[30m'
-GRAY1 = '\x1b[37m'
-GRAY2 = '\x1b[90m'
-WHITE = '\x1b[97m'
-
 ALL_COLORS = {
-    name.lower(): color
-    for name, color in locals().items()
-    if not name.startswith('__')
-}
+    'red':       '\x1b[31m',
+    'yellow':    '\x1b[33m',
+    'green':     '\x1b[32m',
+    'cyan':      '\x1b[36m',
+    'blue':      '\x1b[34m',
+    'magenta':   '\x1b[35m',
 
-BOLD      = '\x1b[1m', '\x1b[21m'
-DIM       = '\x1b[2m', '\x1b[22m'
-UNDERLINE = '\x1b[4m', '\x1b[24m'
-INVERTED  = '\x1b[7m', '\x1b[27m'
+    'b_red':     '\x1b[91m',
+    'b_yellow':  '\x1b[93m',
+    'b_green':   '\x1b[92m',
+    'b_cyan':    '\x1b[96m',
+    'b_blue':    '\x1b[94m',
+    'b_magenta': '\x1b[95m',
+
+    'black':     '\x1b[30m',
+    'gray1':     '\x1b[37m',
+    'gray2':     '\x1b[90m',
+    'white':     '\x1b[97m',
+}
 
 ALL_STYLES = {
-    name.lower(): color
-    for name, color in locals().items()
-    if not (name.startswith('__')
-            or name == 'ALL_COLORS'
-            or name.lower() in ALL_COLORS)
+    'bold':      ('\x1b[1m', '\x1b[21m'),
+    'dim':       ('\x1b[2m', '\x1b[22m'),
+    'underline': ('\x1b[4m', '\x1b[24m'),
+    'inverted':  ('\x1b[7m', '\x1b[27m'),
 }
+
+for name, color in ALL_COLORS.items():
+    globals()[name.upper()] = color
+
+for name, (start, end) in ALL_STYLES.items():
+    globals()[name.upper()] = start
+    globals()[name.upper() + "_END"] = end
 
 CLEAR = '\x1b[0m'
 

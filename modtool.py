@@ -253,6 +253,7 @@ def mod_filter(game_url, start_post=0, votecount=False, deadline=None, modname=N
         k: v for k, v in urlparse.parse_qsl(query)
         if k in ['t', 'f']
     }
+    qargs['ppp'] = 200
     total_posts = None
     votes = {} if votecount else None
     initial_vote_count = votecount
@@ -266,7 +267,7 @@ def mod_filter(game_url, start_post=0, votecount=False, deadline=None, modname=N
                 res.text, votes, initial_vote_count,
                 day=day, count_no=count_no, modname=modname)
             initial_vote_count = False
-            start_post += 25
+            start_post += 200
         else:
             raise Exception("Request error!")
 
@@ -289,6 +290,10 @@ if __name__ == '__main__':
                         help="The deadline to display in the votecounter.")
     parser.add_argument('-m', '--modname',
                         help="The username of the moderator.")
+    parser.add_argument('-y', '--auto-confirm',
+                        help="Automatically confirm interactive confirmations.")
+    parser.add_argument('-i', '--interactive-fixes',
+                        help="Allow user to correct imperfect vote matches interactively.")
 
     args = parser.parse_args()
 
