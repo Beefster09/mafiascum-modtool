@@ -12,7 +12,7 @@ import lxml.html
 from lxml import etree
 from fuzzywuzzy import fuzz, process
 
-from colors import fmt as c
+from colors import fmt
 
 class InvalidVoteError(Exception):
     def __str__(self):
@@ -65,6 +65,8 @@ def user_ratio(a_orig, b_orig):
     )
 
 def fuzzy_vote(vote, users, ambiguity_threshold=5):
+    if vote is None:
+        return vote
     if vote.lower() == 'no lynch':
         return 'No Lynch'
     user_poss = list(users)
@@ -91,188 +93,245 @@ def get_wagons(votes):
         wagons[votee].append((post, voter))
     return wagons
 
-def print_vote_count(votes, day='X', count='Y', deadline='20YY-MM-DD hh:mm:ss tz'):
-    def lminus(actual, required):
-        if actual >= majority:
-            return '[b][i](LYNCHED)[/i][/b]'
-        if majority - actual == 1 or actual / majority >= 0.6:
-            return '[b][i](L-{})[/b][/i]'.format(required - actual)
-        else:
-            return ''
+class ModTool:
+    DEFAULT_STYLES = {
+        'error': fmt.Red,
+        'warning': fmt.Yellow,
 
-    def vote_ref(post_ref, voter):
-        if post_ref > 0:
-            return '[post={}]{}[/post]'.format(post_ref, voter)
-        else:
-            return voter
-    wagons = get_wagons(votes)
-    playercount = len(votes)
-    majority = len(votes) // 2 + 1
-    print('[area=Official Vote Count {}-{}]'.format(day, count))
-    for wagon, voters in sorted(wagons.items(), key=lambda x: -len(x[1])):
-        if wagon is not None:
-            print('[b]{wagon}[/b] ({count}): {voters} {lminus}'.format(
-                wagon=wagon, count=len(voters), voters=', '.join(
-                    [vote_ref(*v) for v in sorted(voters)]),
-                lminus=lminus(len(voters), majority)
-            ))
-    print()
-    not_voting = wagons[None]
-    print('[i]Not Voting[/i] ({}): {}'.format(
-        len(not_voting), ', '.join([vote_ref(*v) for v in sorted(not_voting)])
-    ))
-    print()
-    print('With {} players alive, it takes {} to lynch.'.format(playercount, majority))
-    print()
-    print('[b]Deadline[/b]: [countdown]{}[/countdown]'.format(deadline))
-    print('[/area]')
+        'vote': fmt.Green,
+        'unvote': fmt.dim.green,
+        'hammer': fmt.Cyan,
+        'user': fmt.inverted,
+        'postnum': fmt.underline,
 
-def filter_page(page, votes=None, initial_vote_count=False, day='X', count_no='Y', modname=None):
-    def count_vote(raw_vote):
-        try:
-            vote = fuzzy_vote(raw_vote, votes)
-            if vote:
-                votes[user] = postnum, vote
-                if raw_vote.lower() != vote.lower():
-                    print(c.b_yellow("WARNING: '{}' ==> '{}'", raw_vote, vote))
-                if len(get_wagons(votes)[vote]) > len(votes) / 2:
-                    important.append(c.b_cyan("{} has been HAMMERED!", vote))
-                    deferred.append(lambda: print_vote_count(votes))
+        'v/la': fmt.magenta,
+        '@mod': fmt.Blue,
+        'replace': fmt.cyan,
+    }
+
+    def __init__(self, game_url, votecount=False, modname=None, deadline=None,
+                 theme=None, **kwargs):
+        self.base_url, query = game_url.split('?')
+        self.query = {
+            k: v for k, v in urlparse.parse_qsl(query)
+            if k in ['t', 'f']
+        }
+
+        self.votecount_enabled = votecount
+        self.votes = None
+        self.day = 0
+        self.count_no = 0
+        self.deadline = deadline
+        self.modname = modname
+        self.valid_players = []
+        self.replacements = {}
+
+        self.styles = dict(self.DEFAULT_STYLES)
+        if theme:
+            self.styles.update(theme)
+
+    def warning(self, fmt, *args, **kwargs):
+        print(self.styles['warning']('WARNING: ' + str(fmt).format(*args, **kwargs)))
+
+    def error(self, fmt, *args, **kwargs):
+        print(self.styles['error']('ERROR: ' + str(fmt).format(*args, **kwargs)))
+
+    def print_vote_count(self):
+        """Print a BBCode-formatted vote count."""
+        def lminus(actual, required):
+            if actual >= majority:
+                return '[b][i](LYNCHED)[/i][/b]'
+            if majority - actual == 1 or actual / majority >= 0.6:
+                return '[b][i](L-{})[/b][/i]'.format(required - actual)
             else:
-                print(c.b_red("ERROR: '{}' could not be matched to any player!", raw_vote))
+                return ''
+
+        def vote_ref(post_ref, voter):
+            if post_ref > 0:
+                return '[post={}]{}[/post]'.format(post_ref, voter)
+            else:
+                return voter
+
+        wagons = get_wagons(self.votes)
+        playercount = len(self.votes)
+        majority = len(self.votes) // 2 + 1
+        print('[area=Official Vote Count {}-{}]'.format(self.day, self.count_no))
+        for wagon, voters in sorted(wagons.items(),
+                                    key=lambda x: (-len(x[1]), x[1][0][0]
+                                                   if x[1] else -999)):
+            if wagon is not None:
+                print('[b]{wagon}[/b] ({count}): {voters} {lminus}'.format(
+                    wagon=wagon, count=len(voters), voters=', '.join(
+                        [vote_ref(*v) for v in sorted(voters)]),
+                    lminus=lminus(len(voters), majority)
+                ))
+        print()
+        not_voting = wagons[None]
+        print('[i]Not Voting[/i] ({}): {}'.format(
+            len(not_voting), ', '.join([vote_ref(*v) for v in sorted(not_voting)])
+        ))
+        print()
+        print('With {} players alive, it takes {} to lynch.'.format(playercount, majority))
+        print()
+        print('[b]Deadline[/b]: [countdown]{}[/countdown]'.format(self.deadline))
+        print('[/area]')
+
+    def count_vote(self, user, raw_vote, postnum):
+        """Count a player's vote, trying to match the vote to a player.
+        The operator will be warned on questionable votes.
+
+        Returns a boolean indicating if the voted player was hammered
+                or None if no vote was counted."""
+        if self.votes is None or user not in self.votes:
+            return # Ignore vote
+        if raw_vote is None:
+            self.votes[user] = postnum, None
+            return False
+        try:
+            vote = fuzzy_vote(raw_vote, self.valid_players)
+            while vote in self.replacements:
+                vote = self.replacements[vote]
+            if vote:
+                self.votes[user] = postnum, vote
+                if raw_vote.lower() != vote.lower():
+                    self.warning("'{}' ==> '{}'", raw_vote, vote)
+                return len(get_wagons(self.votes)[vote]) > len(self.votes) / 2
+            else:
+                self.error("'{}' could not be matched to any player!", raw_vote)
         except InvalidVoteError as e:
-            print(c.b_red("ERROR: {}!", str(e)))
+            self.error(str(e))
 
-    doc = lxml.html.fromstring(page)
-    total_posts = int(doc.find_class('pagination')[0].text_content().lstrip('"').split()[0])
-    for quote in doc.xpath('//blockquote'):
-        quote.drop_tree()
-    for post in doc.find_class('post'):
-        postnum = int(post.xpath('.//p[@class="author"]/a/strong')[0].text_content().strip().lstrip('#'))
-        user = post.xpath('.//dl[@class="postprofile"]/dt/a')[0].text_content().strip()
+    def replace_player(self, original, replacement):
+        self.valid_players.append(replacement)
+        self.replacements[original] = replacement
+        self.votes[replacement] = self.votes[original]
+        del self.votes[original]
+        for voter in votes:
+            p, v = self.votes[voter]
+            if v == original:
+                self.votes[voter] = p, replacement
 
-        if initial_vote_count:
-            vote_counter = post.xpath('.//fieldset[legend[starts-with(text(),"Official Vote Count")]]')
-            if vote_counter:
-                if modname is None:
-                    modname = user
-                vote_counter = vote_counter[0]
-                header = vote_counter.xpath('legend')[0]
-                _, dc = header.text_content().rsplit(None, 1)
-                day, count_no = dc.split('-')
-                day = int(day)
-                count_no = int(count_no) + 1
-                header.drop_tree()
-                fake_post_nums = itertools.count(-99)
-                for rawline in etree.tostring(vote_counter, encoding='unicode').split('<br />'):
-                    try:
-                        line = lxml.html.fromstring(rawline).text_content().strip()
-                    except etree.ParserError:
-                        continue
-                    if not line or line.startswith('Deadline') or ':' not in line:
-                        continue
-                    wagon, voters = line.split(':', 1)
-                    if '(' in voters and voters.endswith(')'): # Remove (L-X)
-                        voters = voters.split('(')[0]
-                    wagon = wagon.rsplit(None, 1)[0].strip()
-                    voters = [v.strip() for v in voters.split(',')]
-                    if wagon == 'Not Voting':
-                        wagon = None
-                    for voter in voters:
-                        votes[voter] = next(fake_post_nums), wagon
-                initial_vote_count = False
-                continue
-
-        post_text = etree.tostring(post.find_class('content')[0], encoding='unicode').strip()
-        important = []
-        deferred = []
-        for rawline in post_text.split('<br />'):
+    def init_votes(self, vote_counter):
+        header = vote_counter.xpath('legend')[0]
+        _, dc = header.text_content().rsplit(None, 1)
+        day, count_no = dc.split('-')
+        self.day = int(day)
+        self.count_no = int(count_no) + 1
+        header.drop_tree()
+        fake_post_nums = itertools.count(-99)
+        for rawline in etree.tostring(vote_counter, encoding='unicode').split('<br />'):
             try:
-                line = lxml.html.fromstring(rawline)
+                line = lxml.html.fromstring(rawline).text_content().strip()
             except etree.ParserError:
                 continue
-            plain = line.text_content().strip()
-            plainlower = plain.lower()
-            linevote = line.find_class('bbvote')
-            if plainlower.startswith('mod') or '@mod' in plainlower:
-                important.append(c.b_blue(plain))
+            if not line or line.startswith('Deadline') or ':' not in line:
+                continue
+            wagon, voters = line.split(':', 1)
+            if '(' in voters and voters.endswith(')'): # Remove (L-X)
+                voters = voters.split('(')[0]
+            wagon = wagon.rsplit(None, 1)[0].strip()
+            voters = [v.strip() for v in voters.split(',')]
+            if wagon == 'Not Voting':
+                wagon = None
+            for voter in voters:
+                self.votes[voter] = next(fake_post_nums), wagon
+        self.valid_players = list(self.votes)
 
-            if 'V/LA' in plain.upper():
-                important.append(c.magenta(plain))
+    def process_page(self, page, end_post=None):
+        doc = lxml.html.fromstring(page)
+        if end_post is None:
+            end_post = int(doc.find_class('pagination')[0].text_content().lstrip('"').split()[0])
+        for quote in doc.xpath('//blockquote'):
+            quote.drop_tree()
+        for post in doc.find_class('post'):
+            postnum = int(post.xpath('.//p[@class="author"]/a/strong')[0].text_content().strip().lstrip('#'))
+            user = post.xpath('.//dl[@class="postprofile"]/dt/a')[0].text_content().strip()
+            if postnum > end_post:
+                return end_post
 
-            if 'replaces' in plain and user == modname:
-                important.append(c.cyan(plain))
+            if self.votes is None:
+                vote_counter = post.xpath('.//fieldset[legend[starts-with(text(),"Official Vote Count")]]')
+                if vote_counter:
+                    self.votes = {}
+                    if self.modname is None:
+                        self.modname = user
+                    self.init_votes(vote_counter[0])
+                    continue
+
+            post_text = etree.tostring(post.find_class('content')[0], encoding='unicode').strip()
+            important = []
+            deferred = []
+            for rawline in post_text.split('<br />'):
                 try:
-                    new, old = plain.split('replaces')
-                    new = new.strip()
-                    old = old.strip()
-                    votes[new] = votes[old]
-                    del votes[old]
-                    for voter in votes:
-                        p, v = votes[voter]
-                        if v == old:
-                            votes[voter] = p, new
-                except Exception:
-                    print(c.b_red("ERROR replacing player: {}", traceback.format_exc()))
+                    line = lxml.html.fromstring(rawline)
+                except etree.ParserError:
+                    continue
+                plain = line.text_content().strip()
+                plainlower = plain.lower()
+                if plainlower.startswith('mod') or '@mod' in plainlower:
+                    important.append(self.styles['@mod'](plain))
 
-            if linevote:
-                raw_vote = linevote[0].text_content()
-                vtype, vote = raw_vote.split(':')
-                if vtype == 'VOTE' and vote.strip().lower() != 'unvote':
-                    important.append(c.b_green(plain))
-                    if votes is not None and user in votes:
-                        count_vote(vote.strip())
-                else:
-                    important.append(c.dim.green(plain))
-                    if votes is not None and user in votes:
-                        votes[user] = postnum, None
-            elif plain.startswith('VOTE:'):
-                important.append(c.b_green(plain))
-                if votes is not None and user in votes:
-                    count_vote(plain.split(':')[1].strip())
-            elif plain.startswith('UNVOTE'):
-                important.append(c.green(plain))
-                if votes is not None and user in votes:
-                    votes[user] = postnum, None
+                if 'V/LA' in plain.upper():
+                    important.append(self.styles['v/la'](plain))
 
-        if important:
-            print("{} - Post #{}:".format(c.inverted(user), postnum))
-            for line in important:
-                print('    ' + line)
+                if 'replaces' in plain and user == self.modname:
+                    important.append(self.styles['replace'](plain))
+                    try:
+                        new, old = plain.split('replaces')
+                        self.replace_player(old.strip(), new.strip())
+                    except Exception:
+                        self.error("Unable to do replacement: {}", traceback.format_exc())
 
-        for thunk in deferred:
-            thunk()
+                linevote = line.find_class('bbvote')
+                hammered = None
+                if linevote:
+                    raw_vote = linevote[0].text_content()
+                    vtype, vote = raw_vote.split(':')
+                    if vtype == 'VOTE' and vote.strip().lower() != 'unvote':
+                        important.append(self.styles['vote'](plain))
+                        hammered = self.count_vote(user, vote.strip(), postnum)
+                    else:
+                        important.append(self.styles['unvote'](plain))
+                        hammered = self.count_vote(user, None, postnum)
+                elif plain.upper().startswith('VOTE:'): #TODO: have user confirm if vote is intended
+                    important.append(self.styles['vote'](plain))
+                    hammered = self.count_vote(user, plain.split(':')[1].strip(), postnum)
+                elif plain.upper().startswith('UNVOTE'):
+                    important.append(self.styles['unvote'](plain))
+                    hammered = self.count_vote(user, None, postnum)
 
-        if important or deferred:
-            print()
-    return total_posts, day, count_no, modname
+                if hammered:
+                    important.append(self.styles['hammer']("{} has been HAMMERED!", vote))
+                    deferred.append(lambda: self.print_vote_count(votes))
 
-def mod_filter(game_url, start_post=0, votecount=False, deadline=None, modname=None, **_):
-    base, query = game_url.split('?')
-    qargs = {
-        k: v for k, v in urlparse.parse_qsl(query)
-        if k in ['t', 'f']
-    }
-    qargs['ppp'] = 200
-    total_posts = None
-    votes = {} if votecount else None
-    initial_vote_count = votecount
-    day, count_no = 'X', 'Y'
-    while total_posts is None or start_post < total_posts:
-        if start_post:
-            qargs['start'] = str(start_post)
-        res = requests.get(base, params=qargs)
-        if res.status_code == 200:
-            total_posts, day, count_no, modname = filter_page(
-                res.text, votes, initial_vote_count,
-                day=day, count_no=count_no, modname=modname)
-            initial_vote_count = False
-            start_post += 200
-        else:
-            raise Exception("Request error!")
+            if important:
+                print("{} - {}:".format(self.styles['user'](user),
+                                        self.styles['postnum']('Post #' + str(postnum))))
+                for line in important:
+                    print('    ' + line)
 
-    if votecount:
-        print_vote_count(votes, day=day, count=count_no, deadline=deadline)
+            for thunk in deferred:
+                thunk()
+
+            if important or deferred:
+                print()
+        return end_post
+
+    def run(self, start_post=0, end_post=None, page_size=200):
+        qargs = dict(self.query)
+        qargs['ppp'] = page_size
+        while end_post is None or start_post < end_post:
+            if start_post:
+                qargs['start'] = start_post
+            res = requests.get(self.base_url, params=qargs)
+            if res.status_code == 200:
+                end_post = self.process_page(res.text, end_post)
+                start_post += page_size
+            else:
+                raise Exception("Request error!")
+
+        if self.votecount_enabled:
+            self.print_vote_count()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -282,6 +341,8 @@ if __name__ == '__main__':
                         help="The url of the game to use. (or file)")
     parser.add_argument('-s', '--start', type=int, default=0, dest='start_post',
                         help="The post # to start from")
+    parser.add_argument('-e', '--end', type=int, dest='end_post',
+                        help="The post # to end at")
     parser.add_argument('-l', '--local', action='store_true',
                         help="Filter a saved page")
     parser.add_argument('-v', '--votecount', action='store_true',
@@ -299,10 +360,12 @@ if __name__ == '__main__':
 
     if args.local:
         with open(args.game_url) as game:
-            filter_page(game.read())
+            process_page(game.read())
     else:
         if args.votecount and not args.modname:
-            print(c.yellow("NOTE: votecount was requested, but modname was "
-                           "unspecified. Moderator will be inferred from "
-                           "inital vote count post."))
-        mod_filter(**vars(args))
+            print(fmt.yellow("NOTE: votecount was requested, but modname was "
+                             "unspecified. Moderator will be inferred from "
+                             "inital vote count post."))
+        mod_tool = ModTool(args.game_url, votecount=args.votecount,
+                           modname=args.modname, deadline=args.deadline)
+        mod_tool.run(args.start_post, args.end_post)
