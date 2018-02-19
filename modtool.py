@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 import argparse
-import re
+import configparser
 import itertools
+import os.path
+import re
 import traceback
 from collections import defaultdict
 from urllib import parse as urlparse
@@ -13,6 +15,7 @@ from lxml import etree
 from fuzzywuzzy import fuzz, process
 
 from colors import fmt
+import themes
 
 class InvalidVoteError(Exception):
     def __str__(self):
@@ -94,7 +97,7 @@ def get_wagons(votes):
     return wagons
 
 class ModTool:
-    DEFAULT_STYLES = {
+    DEFAULT_STYLE = {
         'error': fmt.Red,
         'warning': fmt.Yellow,
 
@@ -107,6 +110,7 @@ class ModTool:
         'v/la': fmt.magenta,
         '@mod': fmt.Blue,
         'replace': fmt.cyan,
+        'votecount': fmt,
     }
 
     def __init__(self, game_url, votecount=False, modname=None, deadline=None,
@@ -126,7 +130,7 @@ class ModTool:
         self.valid_players = []
         self.replacements = {}
 
-        self.styles = dict(self.DEFAULT_STYLES)
+        self.styles = dict(self.DEFAULT_STYLE)
         if theme:
             self.styles.update(theme)
 
@@ -138,6 +142,9 @@ class ModTool:
 
     def print_vote_count(self):
         """Print a BBCode-formatted vote count."""
+        if not self.votes:
+            return
+
         def lminus(actual, required):
             if actual >= majority:
                 return '[b][i](LYNCHED)[/i][/b]'
@@ -152,29 +159,30 @@ class ModTool:
             else:
                 return voter
 
-        wagons = get_wagons(self.votes)
-        playercount = len(self.votes)
-        majority = len(self.votes) // 2 + 1
-        print('[area=Official Vote Count {}-{}]'.format(self.day, self.count_no))
-        for wagon, voters in sorted(wagons.items(),
-                                    key=lambda x: (-len(x[1]), x[1][0][0]
-                                                   if x[1] else -999)):
-            if wagon is not None:
-                print('[b]{wagon}[/b] ({count}): {voters} {lminus}'.format(
-                    wagon=wagon, count=len(voters), voters=', '.join(
-                        [vote_ref(*v) for v in sorted(voters)]),
-                    lminus=lminus(len(voters), majority)
-                ))
-        print()
-        not_voting = wagons[None]
-        print('[i]Not Voting[/i] ({}): {}'.format(
-            len(not_voting), ', '.join([vote_ref(*v) for v in sorted(not_voting)])
-        ))
-        print()
-        print('With {} players alive, it takes {} to lynch.'.format(playercount, majority))
-        print()
-        print('[b]Deadline[/b]: [countdown]{}[/countdown]'.format(self.deadline))
-        print('[/area]')
+        with self.styles['votecount']:
+            wagons = get_wagons(self.votes)
+            playercount = len(self.votes)
+            majority = len(self.votes) // 2 + 1
+            print('[area=Official Vote Count {}-{}]'.format(self.day, self.count_no))
+            for wagon, voters in sorted(wagons.items(),
+                                        key=lambda x: (-len(x[1]), x[1][0][0]
+                                                       if x[1] else -999)):
+                if wagon is not None:
+                    print('[b]{wagon}[/b] ({count}): {voters} {lminus}'.format(
+                        wagon=wagon, count=len(voters), voters=', '.join(
+                            [vote_ref(*v) for v in sorted(voters)]),
+                        lminus=lminus(len(voters), majority)
+                    ))
+            print()
+            not_voting = wagons[None]
+            print('[i]Not Voting[/i] ({}): {}'.format(
+                len(not_voting), ', '.join([vote_ref(*v) for v in sorted(not_voting)])
+            ))
+            print()
+            print('With {} players alive, it takes {} to lynch.'.format(playercount, majority))
+            print()
+            print('[b]Deadline[/b]: [countdown]{}[/countdown]'.format(self.deadline))
+            print('[/area]')
 
     def count_vote(self, user, raw_vote, postnum):
         """Count a player's vote, trying to match the vote to a player.
@@ -182,7 +190,9 @@ class ModTool:
 
         Returns a boolean indicating if the voted player was hammered
                 or None if no vote was counted."""
-        if self.votes is None or user not in self.votes:
+        if (not self.votecount_enabled
+            or self.votes is None
+            or user not in self.votes):
             return # Ignore vote
         if raw_vote is None:
             self.votes[user] = postnum, None
@@ -206,12 +216,14 @@ class ModTool:
         self.replacements[original] = replacement
         self.votes[replacement] = self.votes[original]
         del self.votes[original]
-        for voter in votes:
+        for voter in self.votes:
             p, v = self.votes[voter]
             if v == original:
                 self.votes[voter] = p, replacement
 
     def init_votes(self, vote_counter):
+        if not self.votecount_enabled:
+            return
         header = vote_counter.xpath('legend')[0]
         _, dc = header.text_content().rsplit(None, 1)
         day, count_no = dc.split('-')
@@ -331,6 +343,8 @@ class ModTool:
                 raise Exception("Request error!")
 
         if self.votecount_enabled:
+            print('=' * 50)
+            print()
             self.print_vote_count()
 
 if __name__ == '__main__':
@@ -342,30 +356,36 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--start', type=int, default=0, dest='start_post',
                         help="The post # to start from")
     parser.add_argument('-e', '--end', type=int, dest='end_post',
-                        help="The post # to end at")
-    parser.add_argument('-l', '--local', action='store_true',
-                        help="Filter a saved page")
+                        help="The post # to end at (inclusive)")
     parser.add_argument('-v', '--votecount', action='store_true',
                         help="Count votes")
     parser.add_argument('-d', '--deadline',
                         help="The deadline to display in the votecounter.")
     parser.add_argument('-m', '--modname',
                         help="The username of the moderator.")
-    parser.add_argument('-y', '--auto-confirm',
+    parser.add_argument('-y', '--auto-confirm', action='store_true',
                         help="Automatically confirm interactive confirmations.")
-    parser.add_argument('-i', '--interactive-fixes',
+    parser.add_argument('-i', '--interactive-fixes', action='store_true',
                         help="Allow user to correct imperfect vote matches interactively.")
 
     args = parser.parse_args()
 
-    if args.local:
-        with open(args.game_url) as game:
-            process_page(game.read())
+    rcfile = os.path.join(os.path.expanduser('~'), '.modtoolrc')
+    if os.path.isfile(rcfile):
+        config = configparser.ConfigParser()
+        config.read(rcfile)
+        try:
+            theme = getattr(themes, config['Display']['theme'])
+        except (KeyError, AttributeError):
+            theme = None
     else:
-        if args.votecount and not args.modname:
-            print(fmt.yellow("NOTE: votecount was requested, but modname was "
-                             "unspecified. Moderator will be inferred from "
-                             "inital vote count post."))
-        mod_tool = ModTool(args.game_url, votecount=args.votecount,
-                           modname=args.modname, deadline=args.deadline)
-        mod_tool.run(args.start_post, args.end_post)
+        theme = None
+
+    if args.votecount and not args.modname:
+        print(fmt.yellow("NOTE: votecount was requested, but modname was "
+                         "unspecified. Moderator will be inferred from "
+                         "inital vote count post."))
+    mod_tool = ModTool(args.game_url, votecount=args.votecount,
+                       modname=args.modname, deadline=args.deadline,
+                       theme=theme)
+    mod_tool.run(args.start_post, args.end_post)
