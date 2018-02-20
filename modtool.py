@@ -122,6 +122,7 @@ class ModTool:
         }
 
         self.votecount_enabled = votecount
+        self.last_votecount_post = None
         self.votes = None
         self.day = 0
         self.count_no = 0
@@ -140,7 +141,7 @@ class ModTool:
     def error(self, fmt, *args, **kwargs):
         print(self.styles['error']('ERROR: ' + str(fmt).format(*args, **kwargs)))
 
-    def print_vote_count(self):
+    def print_vote_count(self, backlink=False):
         """Print a BBCode-formatted vote count."""
         if not self.votes:
             return
@@ -182,6 +183,8 @@ class ModTool:
             print('With {} players alive, it takes {} to lynch.'.format(playercount, majority))
             print()
             print('[b]Deadline[/b]: [countdown]{}[/countdown]'.format(self.deadline))
+            if backlink and self.last_votecount_post is not None:
+                print('[size=75][post={}]Previous Vote Count[/post][/size]'.format(self.last_votecount_post))
             print('[/area]')
 
     def count_vote(self, user, raw_vote, postnum):
@@ -267,6 +270,7 @@ class ModTool:
                     self.votes = {}
                     if self.modname is None:
                         self.modname = user
+                    self.last_votecount_post = postnum
                     self.init_votes(vote_counter[0])
                     continue
 
@@ -342,11 +346,6 @@ class ModTool:
             else:
                 raise Exception("Request error!")
 
-        if self.votecount_enabled:
-            print('=' * 50)
-            print()
-            self.print_vote_count()
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description="Parses out mod-relevant info such as @mod and VOTEs")
@@ -363,6 +362,8 @@ if __name__ == '__main__':
                         help="The deadline to display in the votecounter.")
     parser.add_argument('-m', '--modname',
                         help="The username of the moderator.")
+    parser.add_argument('-b', '--backlink', action='store_true',
+                        help="Include link to previous vote count.")
     parser.add_argument('-y', '--auto-confirm', action='store_true',
                         help="Automatically confirm interactive confirmations.")
     parser.add_argument('-i', '--interactive-fixes', action='store_true',
@@ -389,3 +390,7 @@ if __name__ == '__main__':
                        modname=args.modname, deadline=args.deadline,
                        theme=theme)
     mod_tool.run(args.start_post, args.end_post)
+    if args.votecount:
+        print('=' * 50)
+        print()
+        mod_tool.print_vote_count(args.backlink)

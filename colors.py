@@ -17,7 +17,7 @@ BASIC_COLORS = {
     'Magenta': '\x1b[95m',
 
     'black':   '\x1b[30m',
-    'vanilla': '\x1b[37m',
+    'silver':  '\x1b[37m',
     'gray':    '\x1b[90m',
     'white':   '\x1b[97m',
 
@@ -37,7 +37,7 @@ BASIC_COLORS = {
     'bg_Magenta': '\x1b[105m',
 
     'bg_black':   '\x1b[40m',
-    'bg_vanilla': '\x1b[47m',
+    'bg_silver':  '\x1b[47m',
     'bg_gray':    '\x1b[100m',
     'bg_white':   '\x1b[107m',
 }
@@ -63,25 +63,49 @@ def fg256(c):
 def bg256(c):
     return '\x1b[48;5;{}m'.format(int(c))
 
+def clamp(x, lo, hi):
+    if x < lo: return lo
+    elif x > hi: return hi
+    else: return x
+
 def rgb6_to_256color_index(r, g, b):
-    r = min(max(round(r - 0.5), 0), 5)
-    g = min(max(round(g - 0.5), 0), 5)
-    b = min(max(round(b - 0.5), 0), 5)
-    return 16 + int(r) * 36 + int(g) * 6 + int(b)
+    r = clamp(int(r), 0, 5)
+    g = clamp(int(g), 0, 5)
+    b = clamp(int(b), 0, 5)
+    return 16 + r * 36 + g * 6 + b
 
 def rgb6_to_256color(r, g, b):
     return fg256(rgb6_to_256color_index(r, g, b))
 
-def rgb_to_256color_index(r, g, b, radix=256):
-    r /= radix
-    g /= radix
-    b /= radix
-    gray = (r + g + b) / 3
-    err = (abs(gray - r) + abs(gray - g) + abs(gray - b)) / 3
-    if err < 1 / 24:
-        return int(232 + gray * 24)
+Wr, Wg, Wb = 0.299, 0.587, 0.114
+#Wr, Wg, Wb = 1/3, 1/3, 1/3
+def rgb_to_256color_index(r, g, b, radix=255):
+    def close(x):
+        if x >= 95:
+            return round((x - 95) / 40) * 40 + 95
+        elif x < 47.5:
+            return 0
+        else:
+            return 95
+
+    norm = 255 / radix
+    r = clamp(norm * r, 0, 255)
+    g = clamp(norm * g, 0, 255)
+    b = clamp(norm * b, 0, 255)
+
+    nr = close(r)
+    ng = close(g)
+    nb = close(b)
+    colordiff = abs(r - nr) + abs(g - ng) + abs(b - nb)
+
+    gray = clamp(round((Wr * r + Wg * g + Wb * b + 2) / 10) * 10 - 2, 8, 238)
+    graydiff = max(abs(r - gray), abs(g - gray), abs(b - gray)) * (3 if gray >= 48 else 1)
+
+    if graydiff <= colordiff:
+        return int(232 + (gray - 8) // 10)
     else:
-        return rgb6_to_256color_index(r * 6, g * 6, b * 6)
+        return rgb6_to_256color_index(
+            (nr - 95) // 40 + 1, (ng - 95) // 40 + 1, (nb - 95) // 40 + 1)
 
 def rgb_to_256color(r, g, b, radix=256):
     return fg256(rgb_to_256color_index(r, g, b, radix))
@@ -212,17 +236,29 @@ if __name__ == '__main__':
             print(color256(c, c))
 
     elif sys.argv[1] == 'hsv':
-        for s in range(6):
-            H = s * 6 + 1
+        H = 72
+        S = 10
+        V = 26
+        for s in range(S+1):
             for h in range(H):
                 print(' '.join([
-                    color(hex(hsv_to_256color_index(h / H, s / 6, v / 24))[2:],
-                          hsv_to_256color(h / H, s / 6, v / 24))
-                    for v in reversed(range(24))
+                    color(hex(hsv_to_256color_index(h / H, s / S, v / V))[2:],
+                          hsv_to_256color(h / H, s / S, v / V))
+                    for v in reversed(range(V + 1))
                 ]))
             print()
 
     elif sys.argv[1] == 'hsl':
+        H = 72
+        S = 10
+        L = 24
+        for s in range(S+1):
+            for l in range(L, -1, -1):
+                print(''.join([color('#', hsl_to_256color(h / H, s / S, l / L))
+                               for h in range(H)]))
+            print()
+
+    elif sys.argv[1] == 'hls':
         L = 12
         S = 5
         for h in range(0, 360, 10):
