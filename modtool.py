@@ -208,7 +208,7 @@ class ModTool:
                 self.votes[user] = postnum, vote
                 if raw_vote.lower() != vote.lower():
                     self.warning("'{}' ==> '{}'", raw_vote, vote)
-                return len(get_wagons(self.votes)[vote]) > len(self.votes) / 2
+                return sum(v == vote for p, v in self.votes.values()) > len(self.votes) / 2
             else:
                 self.error("'{}' could not be matched to any player!", raw_vote)
         except InvalidVoteError as e:
@@ -318,7 +318,7 @@ class ModTool:
 
                 if hammered:
                     important.append(self.styles['hammer']("{} has been HAMMERED!", vote))
-                    deferred.append(lambda: self.print_vote_count(votes))
+                    deferred.append(lambda: self.print_vote_count())
 
             if important:
                 print("{} - {}:".format(self.styles['user'](user),

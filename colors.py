@@ -1,4 +1,12 @@
 import colorsys
+import sys
+import os
+import platform
+
+def clamp(x, lo, hi):
+    if x < lo: return lo
+    elif x > hi: return hi
+    else: return x
 
 BASIC_COLORS = {
     # === FG COLORS ===
@@ -43,43 +51,60 @@ BASIC_COLORS = {
 }
 
 STYLES = {
-    'bold':      ('\x1b[1m', '\x1b[21m'),
-    'dim':       ('\x1b[2m', '\x1b[22m'),
-    'underline': ('\x1b[4m', '\x1b[24m'),
-    'inverted':  ('\x1b[7m', '\x1b[27m'),
+    'bold':      '\x1b[1m',
+    'dim':       '\x1b[2m',
+    'underline': '\x1b[4m',
+    'inverted':  '\x1b[7m',
 }
 
 CLEAR = '\x1b[0m'
 
-def color(s, c):
-    return ''.join([c, str(s), CLEAR])
+# === Control Codes ===
 
-def color256(s, c):
-    return '\x1b[38;5;{}m{}\x1b[0m'.format(c, s)
-
-def fg256(c):
+def _fg256(c):
     return '\x1b[38;5;{}m'.format(int(c))
 
-def bg256(c):
+def _bg256(c):
     return '\x1b[48;5;{}m'.format(int(c))
 
-def clamp(x, lo, hi):
-    if x < lo: return lo
-    elif x > hi: return hi
-    else: return x
+def _fg24bit(r, g, b, radix=255):
+    M = 255 / radix
+    return '\x1b[38;2;{};{};{}m'.format(
+        clamp(int(M * r), 0, 255),
+        clamp(int(M * g), 0, 255),
+        clamp(int(M * b), 0, 255)
+    )
 
-def rgb6_to_256color_index(r, g, b):
+def _bg24bit(r, g, b, radix=255):
+    M = 255 / radix
+    return '\x1b[48;2;{};{};{}m'.format(
+        clamp(int(M * r), 0, 255),
+        clamp(int(M * g), 0, 255),
+        clamp(int(M * b), 0, 255)
+    )
+
+# === Hexcolor conversions ===
+def hex_to_rgb(hexcolor):
+    if hexcolor.startswith('#'):
+        hexcolor = hexcolor[1:]
+    if len(hexcolor) % 3 != 0:
+        raise ValueError("Invalid Hex Color: #{}".format(hexcolor))
+    d = len(hexcolor) // 3
+    radix = 16 ** d
+    return tuple(int(hexcolor[s:s+d], 16) / radix
+                 for s in range(0, len(hexcolor), d))
+
+# === 256-color conversions ===
+
+def _rgb6_to_256color_index(r, g, b):
     r = clamp(int(r), 0, 5)
     g = clamp(int(g), 0, 5)
     b = clamp(int(b), 0, 5)
     return 16 + r * 36 + g * 6 + b
 
-def rgb6_to_256color(r, g, b):
-    return fg256(rgb6_to_256color_index(r, g, b))
-
 Wr, Wg, Wb = 0.299, 0.587, 0.114
 #Wr, Wg, Wb = 1/3, 1/3, 1/3
-def rgb_to_256color_index(r, g, b, radix=255):
+def _rgb_to_256color_index(r, g, b, radix=255):
     def close(x):
         if x >= 95:
             return round((x - 95) / 40) * 40 + 95
@@ -104,35 +129,95 @@ def rgb_to_256color_index(r, g, b, radix=255):
     if graydiff <= colordiff:
         return int(232 + (gray - 8) // 10)
     else:
-        return rgb6_to_256color_index(
+        return _rgb6_to_256color_index(
             (nr - 95) // 40 + 1, (ng - 95) // 40 + 1, (nb - 95) // 40 + 1)
 
-def rgb_to_256color(r, g, b, radix=256):
-    return fg256(rgb_to_256color_index(r, g, b, radix))
+def rgb_to_256color_fg(r, g, b, radix=256):
+    return _fg256(_rgb_to_256color_index(r, g, b, radix))
 
-def hex_to_256color_index(hexcolor):
-    if hexcolor.startswith('#'):
-        hexcolor = hexcolor[1:]
-    assert len(hexcolor) % 3 == 0
-    d = len(hexcolor) // 3
-    return rgb_to_256color_index(
-        *[int(hexcolor[s:s+d], 16) for s in range(0, len(hexcolor), d)],
-        radix=16**d)
+def rgb_to_256color_bg(r, g, b, radix=256):
+    return _bg256(_rgb_to_256color_index(r, g, b, radix))
 
-def hex_to_256color(hexcolor):
-    return fg256(hex_to_256color_index(hexcolor))
+def _hex_to_256color_index(hexcolor):
+    return _rgb_to_256color_index(*hex_to_rgb(hexcolor), 1.0)
 
-def hsv_to_256color_index(h, s, v):
-    return rgb_to_256color_index(*colorsys.hsv_to_rgb(h, s, v), radix=1)
+def hex_to_256color_fg(hexcolor):
+    return _fg256(_hex_to_256color_index(hexcolor))
 
-def hsv_to_256color(h, s, v):
-    return fg256(hsv_to_256color_index(h, s, v))
+def hex_to_256color_bg(hexcolor):
+    return _bg256(_hex_to_256color_index(hexcolor))
 
-def hsl_to_256color_index(h, s, l):
-    return rgb_to_256color_index(*colorsys.hls_to_rgb(h, l, s), radix=1)
+def _hsv_to_256color_index(h, s, v):
+    return _rgb_to_256color_index(*colorsys.hsv_to_rgb(h, s, v), radix=1)
 
-def hsl_to_256color(h, s, l):
-    return fg256(hsl_to_256color_index(h, s, l))
+def hsv_to_256color_fg(h, s, v):
+    return _fg256(_hsv_to_256color_index(h, s, v))
+
+def hsv_to_256color_bg(h, s, v):
+    return _bg256(_hsv_to_256color_index(h, s, v))
+
+def _hsl_to_256color_index(h, s, l):
+    return _rgb_to_256color_index(*colorsys.hls_to_rgb(h, l, s), radix=1)
+
+def hsl_to_256color_fg(h, s, l):
+    return _fg256(_hsl_to_256color_index(h, s, l))
+
+def hsl_to_256color_bg(h, s, l):
+    return _bg256(_hsl_to_256color_index(h, s, l))
+
+# === 24-bit color conversions ===
+
+def hsv_to_truecolor_fg(h, s, v):
+    return _fg24bit(*colorsys.hsv_to_rgb(h, s, v), radix=1)
+
+def hsv_to_truecolor_bg(h, s, v):
+    return _bg24bit(*colorsys.hsv_to_rgb(h, s, v), radix=1)
+
+def hsl_to_truecolor_fg(h, s, l):
+    return _fg24bit(*colorsys.hls_to_rgb(h, l, s), radix=1)
+
+def hsl_to_truecolor_bg(h, s, l):
+    return _bg24bit(*colorsys.hls_to_rgb(h, l, s), radix=1)
+
+def hex_to_truecolor_fg(hexcolor):
+    return _fg24bit(*hex_to_rgb(hexcolor), radix=1)
+
+def hex_to_truecolor_bg(hexcolor):
+    return _bg24bit(*hex_to_rgb(hexcolor), radix=1)
+
+# === Infer capabilities ===
+
+SUPPORTS_TRUECOLOR = os.environ.get('TRUECOLOR', '1') == '1'
+TERM = os.environ.get('TERM')
+SUPPORTS_ANSI = platform.system() != 'Windows'
+
+if sys.stdout.isatty(): # and SUPPORTS_ANSI:
+    if SUPPORTS_TRUECOLOR:
+        rgb_fg = _fg24bit
+        rgb_bg = _bg24bit
+        hsv_fg = hsv_to_truecolor_fg
+        hsv_bg = hsv_to_truecolor_bg
+        hsl_fg = hsl_to_truecolor_fg
+        hsl_bg = hsl_to_truecolor_bg
+        hex_fg = hex_to_truecolor_fg
+        hex_bg = hex_to_truecolor_bg
+    else:
+        rgb_fg = rgb_to_256color_fg
+        rgb_bg = rgb_to_256color_bg
+        hsv_fg = hsv_to_256color_fg
+        hsv_bg = hsv_to_256color_bg
+        hsl_fg = hsl_to_256color_fg
+        hsl_bg = hsl_to_256color_bg
+        hex_fg = hex_to_256color_fg
+        hex_bg = hex_to_256color_bg
+else:
+    CLEAR = ''
+    for key in BASIC_COLORS:
+        BASIC_COLORS[key] = ''
+    for key in STYLES:
+        STYLES[key] = ''
+    rgb_fg = rgb_bg = hsv_fg = hsv_bg = hex_fg = hex_bg = hsl_fg = hsl_bg = (
+        lambda x, y, z, radix=255: '')
 
 LAST = object()
 class Style:
@@ -153,8 +238,7 @@ class Style:
         if style in BASIC_COLORS:
             return Style(self._style + BASIC_COLORS[style])
         if style in STYLES:
-            start, end = STYLES[style]
-            return Style(self._style + start)
+            return Style(self._style + STYLES[style])
         elif isinstance(style, int):
             if 0 <= style < 256:
                 return Style(self._style + fg256(style))
@@ -166,15 +250,15 @@ class Style:
                 raise ValueError(style)
         elif isinstance(style, float):
             if style >= 0:
-                return Style(self._style + fg256(int(min(style, 0.99) * 24) + 232))
+                return Style(self._style + rgb_fg(style, style, style, radix=1))
             else:
-                return Style(self._style + bg256(int(min(-style, 0.99) * 24) + 232))
+                return Style(self._style + rgb_bg(style, style, style, radix=1))
         elif isinstance(style, tuple):
-            return Style(self._style + rgb6_to_256color(*style))
+            return Style(self._style + rgb_fg(*style))
         elif style.startswith('#'):
-            return Style(self._style + hex_to_256color(style))
+            return Style(self._style + hex_fg(style))
         elif style.startswith('-#'):
-            return Style(self._style + bg256(hex_to_256color_index(style[1:])))
+            return Style(self._style + hex_bg(style[1:]))
         else:
             raise KeyError(style)
 
@@ -185,16 +269,16 @@ class Style:
             raise AttributeError(attr)
 
     def hsv(self, h, s, v):
-        return Style(self._style + hsv_to_256color(h / 360, s, v))
+        return Style(self._style + hsv_fg(h / 360, s, v))
 
     def hsl(self, h, s, l):
-        return Style(self._style + hsl_to_256color(h / 360, s, l))
+        return Style(self._style + hsl_fg(h / 360, s, l))
 
-    def bg_hsv(self, h, s, v):
-        return Style(self._style + bg256(hsv_to_256color_index(h / 360, s, v)))
+    def hsv_bg(self, h, s, v):
+        return Style(self._style + hsv_bg(h / 360, s, v))
 
-    def bg_hsl(self, h, s, l):
-        return Style(self._style + bg256(hsl_to_256color_index(h / 360, s, l)))
+    def hsl_bg(self, h, s, l):
+        return Style(self._style + hsl_bg(h / 360, s, l))
 
     @property
     def clear(self):
@@ -224,6 +308,8 @@ if __name__ == '__main__':
             print("underlined brown")
 
     elif sys.argv[1] == 'index':
+        def color256(s, c):
+            return '\x1b[38;5;{}m{}\x1b[0m'.format(c, s)
         for c in range(16):
             print(color256(c, c))
         print()
@@ -238,15 +324,11 @@ if __name__ == '__main__':
     elif sys.argv[1] == 'hsv':
         H = 72
         S = 10
-        V = 26
+        V = 24
         for s in range(S+1):
-            for h in range(H):
-                print(' '.join([
-                    color(hex(hsv_to_256color_index(h / H, s / S, v / V))[2:],
-                          hsv_to_256color(h / H, s / S, v / V))
-                    for v in reversed(range(V + 1))
-                ]))
-            print()
+            for v in range(V, -1, -1):
+                print(''.join([fmt.hsv(h * 360 / H, s / S, v / V)('#')
+                               for h in range(H)]))
 
     elif sys.argv[1] == 'hsl':
         H = 72
@@ -254,18 +336,5 @@ if __name__ == '__main__':
         L = 24
         for s in range(S+1):
             for l in range(L, -1, -1):
-                print(''.join([color('#', hsl_to_256color(h / H, s / S, l / L))
+                print(''.join([fmt.hsl(h * 360 / H, s / S, l / L)('#')
                                for h in range(H)]))
-            print()
-
-    elif sys.argv[1] == 'hls':
-        L = 12
-        S = 5
-        for h in range(0, 360, 10):
-            for l in range(L):
-                print('\t'.join([
-                    color(hsl_to_256color_index(h / 360, s / S, l / L),
-                          hsl_to_256color(h / 360, s / S, l / L))
-                    for s in range(S + 1)
-                ]))
-            print()
