@@ -12,9 +12,10 @@ from urllib import parse as urlparse
 import requests
 import lxml.html
 from lxml import etree
-from fuzzywuzzy import fuzz, process
+from fuzzywuzzy import process
 
 from colors import fmt
+from usermatch import user_ratio
 import themes
 
 class InvalidVoteError(Exception):
@@ -34,38 +35,6 @@ class AmbiguityError(InvalidVoteError):
 class NoMatchError(InvalidVoteError):
     def __str__(self):
         return "'{}' could not be matched to any player!".format(self.args[0])
-
-SEPS = re.compile(r'[-_.]+|\s+')
-def abbrev_match(abbr, full):
-    if len(abbr) < 2 or len(abbr) > len(full) or abbr[0].lower() != full[0].lower():
-        return 0
-    if abbr.upper() == ''.join(filter(str.isupper, full)):
-        return 1
-    if abbr.lower() == ''.join(w[0].lower() for w in SEPS.split(full) if w):
-        return 1
-    pos = 0
-    f = full.lower()
-    # TODO: model probability of word boundaries
-    for char in abbr[1:].lower():
-        pos = f.find(char, pos + 1)
-        if pos == -1:
-            return 0
-    return 0.75
-
-def user_ratio(a_orig, b_orig):
-    a = a_orig.lower()
-    b = b_orig.lower()
-    if a == b:
-        return 100
-    return max(
-        fuzz.ratio(a, b),
-        max(abbrev_match(a, b_orig), abbrev_match(b, a_orig)) * 95,
-        a.startswith(b) * 90, a.endswith(b) * 90,
-        b.startswith(a) * 90, b.endswith(a) * 90,
-        fuzz.partial_ratio(a, b) * 0.7,
-        fuzz.partial_ratio(a.split(None, 1)[0], b) * 0.65,
-        fuzz.partial_ratio(a, b.split(None, 1)[0]) * 0.65,
-    )
 
 def fuzzy_vote(vote, users, ambiguity_threshold=5):
     if vote is None:
